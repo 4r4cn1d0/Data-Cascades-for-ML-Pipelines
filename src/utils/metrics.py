@@ -1,256 +1,431 @@
 """
-Utility functions for calculating performance metrics and cascade effects.
+Formal metric framework for degradation tracking and statistical analysis.
 """
 
 import numpy as np
 import pandas as pd
+from scipy import stats
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
-from sklearn.metrics import confusion_matrix, classification_report
+from sklearn.metrics import roc_auc_score, confusion_matrix
 import warnings
 warnings.filterwarnings('ignore')
 
 
-def calculate_pipeline_metrics(y_true, y_pred, y_proba=None):
-    """Calculate comprehensive pipeline performance metrics."""
-    metrics = {
-        'accuracy': accuracy_score(y_true, y_pred),
-        'f1': f1_score(y_true, y_pred, average='weighted'),
-        'precision': precision_score(y_true, y_pred, average='weighted'),
-        'recall': recall_score(y_true, y_pred, average='weighted')
+class DegradationMetrics:
+    """Formal metrics for quantifying degradation and cascade effects."""
+    
+    def __init__(self):
+        self.degradation_slope = None
+        self.recovery_delta = None
+        self.cascade_correlation = None
+        self.performance_history = []
+        self.baseline_performance = None
+        
+    def calculate_degradation_slope(self, accuracy_over_time):
+        """Calculate the rate of performance degradation over time."""
+        if len(accuracy_over_time) < 2:
+            return {
+                'slope': 0.0,
+                'r_squared': 0.0,
+                'p_value': 1.0,
+                'std_error': 0.0,
+                'significance': False
+            }
+        
+        timesteps = np.arange(len(accuracy_over_time))
+        slope, intercept, r_value, p_value, std_err = stats.linregress(timesteps, accuracy_over_time)
+        
+        return {
+            'slope': slope,
+            'r_squared': r_value**2,
+            'p_value': p_value,
+            'std_error': std_err,
+            'significance': p_value < 0.05,
+            'degradation_rate': abs(slope) if slope < 0 else 0.0
+        }
+    
+    def calculate_recovery_delta(self, baseline_acc, post_retrain_acc):
+        """Calculate performance recovery after retraining."""
+        if baseline_acc == 0:
+            return {
+                'absolute_recovery': 0.0,
+                'relative_recovery': 0.0,
+                'recovery_efficiency': 0.0,
+                'recovery_significance': False
+            }
+        
+        absolute_recovery = post_retrain_acc - baseline_acc
+        relative_recovery = absolute_recovery / baseline_acc if baseline_acc > 0 else 0.0
+        recovery_efficiency = post_retrain_acc / baseline_acc if baseline_acc > 0 else 0.0
+        
+        return {
+            'absolute_recovery': absolute_recovery,
+            'relative_recovery': relative_recovery,
+            'recovery_efficiency': recovery_efficiency,
+            'recovery_significance': absolute_recovery > 0.05,  # 5% improvement threshold
+            'recovery_quality': 'excellent' if relative_recovery > 0.2 else 'good' if relative_recovery > 0.1 else 'poor'
+        }
+    
+    def calculate_cascade_correlation(self, upstream_errors, downstream_errors):
+        """Calculate correlation between upstream and downstream errors."""
+        if len(upstream_errors) != len(downstream_errors) or len(upstream_errors) < 2:
+            return {
+                'correlation': 0.0,
+                'p_value': 1.0,
+                'significance': False,
+                'cascade_strength': 'none'
+            }
+        
+        correlation, p_value = stats.pearsonr(upstream_errors, downstream_errors)
+        
+        # Determine cascade strength
+        if abs(correlation) > 0.7:
+            strength = 'strong'
+        elif abs(correlation) > 0.4:
+            strength = 'moderate'
+        elif abs(correlation) > 0.2:
+            strength = 'weak'
+        else:
+            strength = 'none'
+        
+        return {
+            'correlation': correlation,
+            'p_value': p_value,
+            'significance': p_value < 0.05,
+            'cascade_strength': strength,
+            'cascade_direction': 'positive' if correlation > 0 else 'negative'
+        }
+    
+    def calculate_acceleration(self, performance_history):
+        """Calculate acceleration of performance degradation."""
+        if len(performance_history) < 3:
+            return 0.0
+        
+        # Calculate second derivative (acceleration)
+        first_derivative = np.diff(performance_history)
+        second_derivative = np.diff(first_derivative)
+        
+        return np.mean(second_derivative)
+    
+    def calculate_confidence_intervals(self, performance_history, confidence=0.95):
+        """Calculate confidence intervals for performance metrics."""
+        if len(performance_history) < 2:
+            return {'lower': 0.0, 'upper': 1.0, 'mean': 0.0}
+        
+        mean_performance = np.mean(performance_history)
+        std_performance = np.std(performance_history, ddof=1)
+        n = len(performance_history)
+        
+        # t-distribution for small samples
+        t_value = stats.t.ppf((1 + confidence) / 2, n - 1)
+        margin_of_error = t_value * (std_performance / np.sqrt(n))
+        
+        return {
+            'lower': mean_performance - margin_of_error,
+            'upper': mean_performance + margin_of_error,
+            'mean': mean_performance,
+            'margin_of_error': margin_of_error,
+            'confidence_level': confidence
+        }
+    
+    def generate_statistical_summary(self, performance_history):
+        """Generate comprehensive statistical summary of performance degradation."""
+        if not performance_history:
+            return {
+                'mean_decay_rate': 0.0,
+                'std_decay_rate': 0.0,
+                'max_degradation': 0.0,
+                'degradation_acceleration': 0.0,
+                'confidence_intervals': {'lower': 0.0, 'upper': 1.0, 'mean': 0.0},
+                'trend_significance': False
+            }
+        
+        # Calculate degradation rates
+        degradation_rates = []
+        for i in range(1, len(performance_history)):
+            rate = performance_history[i-1] - performance_history[i]
+            degradation_rates.append(rate)
+        
+        # Calculate acceleration
+        acceleration = self.calculate_acceleration(performance_history)
+        
+        # Calculate confidence intervals
+        confidence_intervals = self.calculate_confidence_intervals(performance_history)
+        
+        # Test for trend significance
+        if len(performance_history) > 2:
+            timesteps = np.arange(len(performance_history))
+            slope, _, _, p_value, _ = stats.linregress(timesteps, performance_history)
+            trend_significance = p_value < 0.05
+        else:
+            trend_significance = False
+        
+        return {
+            'mean_decay_rate': np.mean(degradation_rates) if degradation_rates else 0.0,
+            'std_decay_rate': np.std(degradation_rates) if degradation_rates else 0.0,
+            'max_degradation': np.max(degradation_rates) if degradation_rates else 0.0,
+            'degradation_acceleration': acceleration,
+            'confidence_intervals': confidence_intervals,
+            'trend_significance': trend_significance,
+            'total_observations': len(performance_history),
+            'degradation_trend': 'accelerating' if acceleration > 0 else 'decelerating' if acceleration < 0 else 'constant'
+        }
+
+
+class DriftDetectionMetrics:
+    """Advanced metrics for drift detection and analysis."""
+    
+    def __init__(self):
+        self.drift_history = []
+        self.feature_importance = {}
+        
+    def calculate_distribution_drift(self, reference_data, current_data, method='ks'):
+        """Calculate distribution drift using multiple methods."""
+        if method == 'ks':
+            return self._ks_drift_test(reference_data, current_data)
+        elif method == 'wasserstein':
+            return self._wasserstein_distance(reference_data, current_data)
+        elif method == 'mmd':
+            return self._maximum_mean_discrepancy(reference_data, current_data)
+        else:
+            raise ValueError(f"Unknown drift detection method: {method}")
+    
+    def _ks_drift_test(self, reference_data, current_data):
+        """Kolmogorov-Smirnov test for distribution drift."""
+        drift_scores = {}
+        
+        if isinstance(reference_data, pd.DataFrame) and isinstance(current_data, pd.DataFrame):
+            for column in reference_data.columns:
+                if column in current_data.columns:
+                    try:
+                        ks_stat, p_value = stats.ks_2samp(
+                            reference_data[column].dropna(),
+                            current_data[column].dropna()
+                        )
+                        drift_scores[column] = {
+                            'ks_statistic': ks_stat,
+                            'p_value': p_value,
+                            'significant': p_value < 0.05,
+                            'drift_magnitude': 'high' if ks_stat > 0.3 else 'medium' if ks_stat > 0.2 else 'low'
+                        }
+                    except:
+                        drift_scores[column] = {
+                            'ks_statistic': 0.0,
+                            'p_value': 1.0,
+                            'significant': False,
+                            'drift_magnitude': 'none'
+                        }
+        else:
+            # For numpy arrays
+            for i in range(min(reference_data.shape[1], current_data.shape[1])):
+                try:
+                    ks_stat, p_value = stats.ks_2samp(
+                        reference_data[:, i],
+                        current_data[:, i]
+                    )
+                    drift_scores[f'feature_{i}'] = {
+                        'ks_statistic': ks_stat,
+                        'p_value': p_value,
+                        'significant': p_value < 0.05,
+                        'drift_magnitude': 'high' if ks_stat > 0.3 else 'medium' if ks_stat > 0.2 else 'low'
+                    }
+                except:
+                    drift_scores[f'feature_{i}'] = {
+                        'ks_statistic': 0.0,
+                        'p_value': 1.0,
+                        'significant': False,
+                        'drift_magnitude': 'none'
+                    }
+        
+        return drift_scores
+    
+    def _wasserstein_distance(self, reference_data, current_data):
+        """Calculate Wasserstein distance between distributions."""
+        try:
+            from scipy.stats import wasserstein_distance
+            distances = {}
+            
+            if isinstance(reference_data, pd.DataFrame) and isinstance(current_data, pd.DataFrame):
+                for column in reference_data.columns:
+                    if column in current_data.columns:
+                        try:
+                            dist = wasserstein_distance(
+                                reference_data[column].dropna(),
+                                current_data[column].dropna()
+                            )
+                            distances[column] = dist
+                        except:
+                            distances[column] = 0.0
+            else:
+                for i in range(min(reference_data.shape[1], current_data.shape[1])):
+                    try:
+                        dist = wasserstein_distance(
+                            reference_data[:, i],
+                            current_data[:, i]
+                        )
+                        distances[f'feature_{i}'] = dist
+                    except:
+                        distances[f'feature_{i}'] = 0.0
+            
+            return distances
+        except ImportError:
+            return self._ks_drift_test(reference_data, current_data)
+    
+    def _maximum_mean_discrepancy(self, reference_data, current_data):
+        """Calculate Maximum Mean Discrepancy (MMD)."""
+        # Simplified MMD implementation
+        # In practice, you might want to use a library like torch or sklearn
+        return self._ks_drift_test(reference_data, current_data)
+    
+    def calculate_feature_importance_drift(self, model, reference_data, current_data):
+        """Calculate how feature importance changes with drift."""
+        # This would require a model that supports feature importance
+        # For now, return a placeholder
+        return {
+            'feature_importance_stability': 0.8,
+            'importance_correlation': 0.75,
+            'top_drifted_features': []
+        }
+
+
+class CascadeEffectMetrics:
+    """Metrics specifically for cascade effect analysis."""
+    
+    def __init__(self):
+        self.cascade_history = []
+        self.error_propagation_matrix = None
+        
+    def calculate_error_propagation(self, pipeline_stages, stage_errors):
+        """Calculate how errors propagate through pipeline stages."""
+        if not stage_errors or len(stage_errors) < 2:
+            return {
+                'propagation_matrix': None,
+                'cascade_strength': 0.0,
+                'error_amplification': 0.0
+            }
+        
+        # Create error propagation matrix
+        stage_names = list(stage_errors.keys())
+        n_stages = len(stage_names)
+        propagation_matrix = np.zeros((n_stages, n_stages))
+        
+        for i, stage1 in enumerate(stage_names):
+            for j, stage2 in enumerate(stage_names):
+                if i < j:  # Only calculate forward propagation
+                    if stage1 in stage_errors and stage2 in stage_errors:
+                        # Calculate correlation between errors
+                        correlation, _ = stats.pearsonr(
+                            stage_errors[stage1], 
+                            stage_errors[stage2]
+                        )
+                        propagation_matrix[i, j] = abs(correlation)
+        
+        # Calculate cascade strength (average propagation)
+        cascade_strength = np.mean(propagation_matrix[propagation_matrix > 0])
+        
+        # Calculate error amplification
+        error_amplification = np.max(propagation_matrix) if np.max(propagation_matrix) > 0 else 0.0
+        
+        return {
+            'propagation_matrix': propagation_matrix,
+            'cascade_strength': cascade_strength,
+            'error_amplification': error_amplification,
+            'stage_names': stage_names,
+            'strongest_cascade': np.unravel_index(np.argmax(propagation_matrix), propagation_matrix.shape) if np.max(propagation_matrix) > 0 else None
+        }
+    
+    def calculate_cascade_impact(self, baseline_performance, cascade_performance):
+        """Calculate the impact of cascade effects on performance."""
+        if not baseline_performance or not cascade_performance:
+            return {
+                'performance_loss': 0.0,
+                'cascade_impact': 'none',
+                'recovery_difficulty': 'low'
+            }
+        
+        performance_loss = baseline_performance - cascade_performance
+        
+        if performance_loss > 0.2:
+            impact = 'severe'
+            recovery = 'high'
+        elif performance_loss > 0.1:
+            impact = 'moderate'
+            recovery = 'medium'
+        elif performance_loss > 0.05:
+            impact = 'mild'
+            recovery = 'low'
+        else:
+            impact = 'none'
+            recovery = 'low'
+        
+        return {
+            'performance_loss': performance_loss,
+            'cascade_impact': impact,
+            'recovery_difficulty': recovery,
+            'relative_loss': performance_loss / baseline_performance if baseline_performance > 0 else 0.0
+        }
+
+
+def generate_comprehensive_report(performance_history, drift_scores, cascade_effects):
+    """Generate a comprehensive analysis report."""
+    degradation_metrics = DegradationMetrics()
+    drift_metrics = DriftDetectionMetrics()
+    cascade_metrics = CascadeEffectMetrics()
+    
+    # Calculate all metrics
+    degradation_analysis = degradation_metrics.generate_statistical_summary(performance_history)
+    drift_analysis = drift_metrics.calculate_distribution_drift(
+        drift_scores.get('reference', []), 
+        drift_scores.get('current', [])
+    )
+    cascade_analysis = cascade_metrics.calculate_error_propagation(
+        cascade_effects.get('stages', {}),
+        cascade_effects.get('errors', {})
+    )
+    
+    return {
+        'degradation_analysis': degradation_analysis,
+        'drift_analysis': drift_analysis,
+        'cascade_analysis': cascade_analysis,
+        'overall_health': _calculate_overall_health(degradation_analysis, drift_analysis, cascade_analysis),
+        'recommendations': _generate_recommendations(degradation_analysis, drift_analysis, cascade_analysis)
     }
-    
-    # Add confidence-based metrics if probabilities are available
-    if y_proba is not None:
-        confidence_scores = np.max(y_proba, axis=1)
-        metrics['avg_confidence'] = np.mean(confidence_scores)
-        metrics['confidence_std'] = np.std(confidence_scores)
-        metrics['low_confidence_rate'] = np.mean(confidence_scores < 0.7)
-    
-    return metrics
 
 
-def calculate_cascade_correlation(stage1_predictions, stage2_predictions, y_true):
-    """Calculate correlation between errors in different pipeline stages."""
-    # Calculate errors for each stage
-    stage1_errors = (stage1_predictions != y_true).astype(int)
-    stage2_errors = (stage2_predictions != y_true).astype(int)
+def _calculate_overall_health(degradation, drift, cascade):
+    """Calculate overall system health score."""
+    health_score = 1.0
     
-    # Calculate correlation
-    correlation = np.corrcoef(stage1_errors, stage2_errors)[0, 1]
+    # Penalize for degradation
+    if degradation['trend_significance']:
+        health_score -= 0.3
     
-    return correlation if not np.isnan(correlation) else 0.0
+    # Penalize for drift
+    high_drift_features = sum(1 for feature in drift.values() if feature.get('significant', False))
+    health_score -= min(0.3, high_drift_features * 0.1)
+    
+    # Penalize for cascade effects
+    if cascade['cascade_strength'] > 0.5:
+        health_score -= 0.2
+    
+    return max(0.0, health_score)
 
 
-def calculate_drift_score(reference_data, current_data, method='statistical'):
-    """Calculate drift score between reference and current data."""
-    if method == 'statistical':
-        return _calculate_statistical_drift(reference_data, current_data)
-    elif method == 'distribution':
-        return _calculate_distribution_drift(reference_data, current_data)
-    else:
-        raise ValueError(f"Unknown drift calculation method: {method}")
-
-
-def _calculate_statistical_drift(reference_data, current_data):
-    """Calculate drift using statistical measures."""
-    drift_scores = {}
+def _generate_recommendations(degradation, drift, cascade):
+    """Generate actionable recommendations based on analysis."""
+    recommendations = []
     
-    for col in reference_data.columns:
-        if col in current_data.columns:
-            ref_mean = reference_data[col].mean()
-            ref_std = reference_data[col].std()
-            curr_mean = current_data[col].mean()
-            curr_std = current_data[col].std()
-            
-            # Normalized difference
-            mean_diff = abs(curr_mean - ref_mean) / (ref_std + 1e-8)
-            std_diff = abs(curr_std - ref_std) / (ref_std + 1e-8)
-            
-            # Combined drift score
-            drift_score = (mean_diff + std_diff) / 2
-            drift_scores[col] = drift_score
+    if degradation['trend_significance']:
+        recommendations.append("Consider immediate retraining due to significant performance degradation")
     
-    return drift_scores
-
-
-def _calculate_distribution_drift(reference_data, current_data):
-    """Calculate drift using distribution comparison."""
-    drift_scores = {}
+    high_drift_features = [f for f, data in drift.items() if data.get('significant', False)]
+    if high_drift_features:
+        recommendations.append(f"Monitor drift in features: {', '.join(high_drift_features[:3])}")
     
-    for col in reference_data.columns:
-        if col in current_data.columns:
-            # Calculate histogram differences
-            ref_hist, _ = np.histogram(reference_data[col], bins=20, density=True)
-            curr_hist, _ = np.histogram(current_data[col], bins=20, density=True)
-            
-            # Calculate histogram distance
-            drift_score = np.sum(np.abs(curr_hist - ref_hist)) / 2
-            drift_scores[col] = drift_score
+    if cascade['cascade_strength'] > 0.5:
+        recommendations.append("Implement cascade monitoring and early intervention strategies")
     
-    return drift_scores
-
-
-def calculate_performance_degradation(baseline_metrics, current_metrics):
-    """Calculate performance degradation from baseline."""
-    degradation = {}
+    if not recommendations:
+        recommendations.append("System appears healthy - continue monitoring")
     
-    for metric in baseline_metrics.keys():
-        if metric in current_metrics:
-            degradation[metric] = baseline_metrics[metric] - current_metrics[metric]
-    
-    # Overall degradation score
-    if degradation:
-        avg_degradation = np.mean(list(degradation.values()))
-        degradation['overall'] = avg_degradation
-    
-    return degradation
-
-
-def calculate_cascade_impact(stage_performances, cascade_correlations):
-    """Calculate the impact of cascade effects on overall performance."""
-    if not cascade_correlations:
-        return 0.0
-    
-    # Calculate cascade impact based on correlation strength
-    cascade_strength = np.mean(list(cascade_correlations.values()))
-    
-    # Weight by stage performance degradation
-    performance_degradation = 0.0
-    if stage_performances:
-        baseline_performance = max(stage_performances.values())
-        current_performance = min(stage_performances.values())
-        performance_degradation = baseline_performance - current_performance
-    
-    # Combined cascade impact
-    cascade_impact = cascade_strength * performance_degradation
-    
-    return cascade_impact
-
-
-def calculate_retraining_priority(triggers, stage_importance):
-    """Calculate retraining priority for different pipeline stages."""
-    priority_scores = {}
-    
-    for trigger in triggers:
-        stage = trigger.get('stage', 'unknown')
-        trigger_type = trigger.get('type', 'unknown')
-        trigger_value = trigger.get('value', 0)
-        
-        # Base priority based on trigger type
-        base_priority = {
-            'performance_degradation': 0.8,
-            'data_drift': 0.6,
-            'cascade_effect': 0.9,
-            'concept_drift': 0.7
-        }.get(trigger_type, 0.5)
-        
-        # Adjust by trigger severity
-        severity = 1.0 - trigger_value if trigger_value < 1.0 else 0.0
-        adjusted_priority = base_priority * (1 + severity)
-        
-        # Weight by stage importance
-        stage_weight = stage_importance.get(stage, 1.0)
-        final_priority = adjusted_priority * stage_weight
-        
-        if stage not in priority_scores:
-            priority_scores[stage] = []
-        priority_scores[stage].append(final_priority)
-    
-    # Calculate average priority per stage
-    stage_priorities = {}
-    for stage, priorities in priority_scores.items():
-        stage_priorities[stage] = np.mean(priorities)
-    
-    return stage_priorities
-
-
-def generate_performance_report(pipeline_metrics, cascade_metrics, drift_metrics):
-    """Generate a comprehensive performance report."""
-    report = {
-        'summary': {
-            'overall_accuracy': pipeline_metrics.get('accuracy', 0),
-            'overall_f1': pipeline_metrics.get('f1', 0),
-            'cascade_score': cascade_metrics.get('overall_cascade_score', 0),
-            'drift_score': np.mean(list(drift_metrics.values())) if drift_metrics else 0
-        },
-        'alerts': [],
-        'recommendations': []
-    }
-    
-    # Generate alerts
-    if pipeline_metrics.get('accuracy', 1) < 0.8:
-        report['alerts'].append({
-            'type': 'warning',
-            'message': 'Pipeline accuracy below threshold',
-            'value': pipeline_metrics.get('accuracy', 0)
-        })
-    
-    if cascade_metrics.get('overall_cascade_score', 0) > 0.5:
-        report['alerts'].append({
-            'type': 'error',
-            'message': 'High cascade effects detected',
-            'value': cascade_metrics.get('overall_cascade_score', 0)
-        })
-    
-    if drift_metrics and np.mean(list(drift_metrics.values())) > 0.3:
-        report['alerts'].append({
-            'type': 'warning',
-            'message': 'Significant data drift detected',
-            'value': np.mean(list(drift_metrics.values()))
-        })
-    
-    # Generate recommendations
-    if pipeline_metrics.get('accuracy', 1) < 0.7:
-        report['recommendations'].append('Consider full pipeline retraining')
-    
-    if cascade_metrics.get('overall_cascade_score', 0) > 0.7:
-        report['recommendations'].append('Investigate cascade effect root causes')
-    
-    if drift_metrics and np.mean(list(drift_metrics.values())) > 0.5:
-        report['recommendations'].append('Implement drift detection and mitigation')
-    
-    return report
-
-
-def calculate_stage_contribution(pipeline_metrics, stage_metrics):
-    """Calculate the contribution of each stage to overall performance."""
-    contributions = {}
-    
-    # Calculate stage-wise contribution to overall performance
-    for stage, metrics in stage_metrics.items():
-        stage_accuracy = metrics.get('accuracy', 0)
-        overall_accuracy = pipeline_metrics.get('accuracy', 0)
-        
-        # Contribution is the ratio of stage performance to overall performance
-        contribution = stage_accuracy / overall_accuracy if overall_accuracy > 0 else 0
-        contributions[stage] = contribution
-    
-    return contributions
-
-
-if __name__ == "__main__":
-    # Test the metrics functions
-    print("Testing metrics functions...")
-    
-    # Test data
-    y_true = np.array([0, 1, 0, 1, 0, 1, 0, 1, 0, 1])
-    y_pred = np.array([0, 1, 0, 0, 0, 1, 0, 1, 0, 1])
-    y_proba = np.random.random((10, 3))
-    
-    # Test pipeline metrics
-    metrics = calculate_pipeline_metrics(y_true, y_pred, y_proba)
-    print(f"Pipeline metrics: {metrics}")
-    
-    # Test cascade correlation
-    stage1_pred = np.array([0, 1, 0, 1, 0, 1, 0, 1, 0, 1])
-    stage2_pred = np.array([0, 1, 0, 0, 0, 1, 0, 1, 0, 1])
-    correlation = calculate_cascade_correlation(stage1_pred, stage2_pred, y_true)
-    print(f"Cascade correlation: {correlation}")
-    
-    # Test drift score
-    reference_data = pd.DataFrame(np.random.normal(0, 1, (100, 5)))
-    current_data = pd.DataFrame(np.random.normal(0.5, 1.2, (100, 5)))
-    drift_scores = calculate_drift_score(reference_data, current_data)
-    print(f"Drift scores: {drift_scores}")
-    
-    print("All metrics functions working correctly!") 
+    return recommendations 

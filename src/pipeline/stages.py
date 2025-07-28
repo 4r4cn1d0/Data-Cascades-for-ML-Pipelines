@@ -1,382 +1,537 @@
 """
-ML Pipeline stages for cascade effect simulation.
-Implements feature extraction, classification, and post-processing stages.
+Production-ready multi-stage ML pipeline architecture.
 """
 
 import numpy as np
 import pandas as pd
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+from sklearn.feature_selection import SelectKBest, f_classif
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.preprocessing import StandardScaler, PolynomialFeatures
-from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
+from sklearn.linear_model import LogisticRegression
+from sklearn.neural_network import MLPClassifier
+from sklearn.metrics import accuracy_score, classification_report
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader, TensorDataset
 import warnings
 warnings.filterwarnings('ignore')
 
 
-class FeatureExtractionStage:
-    """Stage 1: Feature extraction with drift simulation."""
+class DataIngestionStage:
+    """Realistic data ingestion with validation and preprocessing."""
     
-    def __init__(self, n_features=10, feature_drift_rate=0.01):
-        self.n_features = n_features
-        self.feature_drift_rate = feature_drift_rate
-        self.scaler = StandardScaler()
-        self.poly_features = PolynomialFeatures(degree=2, include_bias=False)
-        self.is_fitted = False
-        self.feature_importance = None
-        self.drift_history = []
+    def __init__(self):
+        self.data_quality_checks = []
+        self.validation_rules = {}
+        self.preprocessing_steps = []
         
-    def fit(self, X, y=None):
-        """Fit the feature extraction stage."""
-        # Fit scaler
-        self.scaler.fit(X)
+    def process(self, data):
+        """Process incoming data with quality checks."""
+        # Data quality validation
+        quality_report = self._validate_data_quality(data)
         
-        # Create polynomial features
-        X_scaled = self.scaler.transform(X)
-        X_poly = self.poly_features.fit_transform(X_scaled)
+        # Basic preprocessing
+        processed_data = self._preprocess_data(data)
         
-        # Calculate feature importance (correlation with target if available)
-        if y is not None:
-            correlations = []
-            for i in range(X_poly.shape[1]):
-                if len(np.unique(y)) > 1:
-                    corr = np.corrcoef(X_poly[:, i], y)[0, 1]
-                    correlations.append(abs(corr) if not np.isnan(corr) else 0)
-                else:
-                    correlations.append(0)
-            self.feature_importance = np.array(correlations)
+        # Store quality metrics
+        self.data_quality_checks.append(quality_report)
+        
+        return processed_data, quality_report
+    
+    def _validate_data_quality(self, data):
+        """Validate data quality and return report."""
+        if isinstance(data, pd.DataFrame):
+            report = {
+                'missing_values': data.isnull().sum().to_dict(),
+                'duplicates': data.duplicated().sum(),
+                'data_types': data.dtypes.to_dict(),
+                'shape': data.shape,
+                'memory_usage': data.memory_usage(deep=True).sum()
+            }
         else:
-            self.feature_importance = np.ones(X_poly.shape[1])
+            report = {
+                'missing_values': np.isnan(data).sum(),
+                'duplicates': 0,  # Not applicable for numpy arrays
+                'data_types': str(data.dtype),
+                'shape': data.shape,
+                'memory_usage': data.nbytes
+            }
         
-        self.is_fitted = True
-        return self
+        # Add quality scores
+        report['quality_score'] = self._calculate_quality_score(report)
+        
+        return report
     
-    def transform(self, X, time_step=0):
-        """Transform input data with potential drift."""
-        if not self.is_fitted:
-            raise ValueError("Feature extraction stage must be fitted first.")
+    def _calculate_quality_score(self, report):
+        """Calculate overall data quality score."""
+        score = 1.0
         
-        # Apply scaling
-        X_scaled = self.scaler.transform(X)
+        # Penalize for missing values
+        if isinstance(report['missing_values'], dict):
+            total_missing = sum(report['missing_values'].values())
+        else:
+            total_missing = report['missing_values']
         
-        # Apply polynomial features
-        X_poly = self.poly_features.transform(X_scaled)
+        if total_missing > 0:
+            score -= min(0.3, total_missing / 1000)  # Cap penalty at 30%
         
-        # Simulate feature drift over time
-        if time_step > 0:
-            drift_factor = time_step * self.feature_drift_rate
-            
-            # Add noise to features based on their importance
-            for i in range(X_poly.shape[1]):
-                importance = self.feature_importance[i] if i < len(self.feature_importance) else 1.0
-                noise = np.random.normal(0, drift_factor * importance, X_poly.shape[0])
-                X_poly[:, i] = X_poly[:, i] + noise
-            
-            # Record drift
-            self.drift_history.append({
-                'time_step': time_step,
-                'drift_factor': drift_factor,
-                'affected_features': list(range(X_poly.shape[1]))
-            })
+        # Penalize for duplicates
+        if report['duplicates'] > 0:
+            score -= min(0.2, report['duplicates'] / 1000)
         
-        return X_poly
+        return max(0.0, score)
     
-    def get_feature_names(self):
-        """Get feature names after transformation."""
-        if not self.is_fitted:
-            return []
+    def _preprocess_data(self, data):
+        """Basic data preprocessing."""
+        if isinstance(data, pd.DataFrame):
+            # Handle missing values
+            data = data.fillna(data.mean())
+            
+            # Remove duplicates
+            data = data.drop_duplicates()
+            
+            # Basic type conversion
+            for col in data.select_dtypes(include=['object']).columns:
+                try:
+                    data[col] = pd.to_numeric(data[col], errors='coerce')
+                except:
+                    pass  # Keep as object if conversion fails
         
-        base_features = [f'feature_{i}' for i in range(self.n_features)]
-        poly_names = self.poly_features.get_feature_names_out(base_features)
-        return poly_names.tolist()
+        return data
 
 
-class ClassificationStage:
-    """Stage 2: Classification with performance degradation simulation."""
+class FeatureEngineeringStage:
+    """Realistic feature engineering with drift simulation."""
     
-    def __init__(self, n_classes=3, degradation_rate=0.005):
-        self.n_classes = n_classes
-        self.degradation_rate = degradation_rate
-        self.classifier = RandomForestClassifier(n_estimators=100, random_state=42)
-        self.is_fitted = False
-        self.base_performance = None
-        self.performance_history = []
+    def __init__(self, n_features=50, n_components=25):
+        self.scaler = StandardScaler()
+        self.feature_selector = SelectKBest(score_func=f_classif, k=n_features)
+        self.pca = PCA(n_components=n_components)
+        self.feature_importance = {}
+        self.feature_names = []
         
-    def fit(self, X, y):
-        """Fit the classification stage."""
-        self.classifier.fit(X, y)
-        self.is_fitted = True
+    def process(self, data, labels=None):
+        """Process data through feature engineering pipeline."""
+        # Store original feature names
+        if isinstance(data, pd.DataFrame):
+            self.feature_names = list(data.columns)
+        else:
+            self.feature_names = [f'feature_{i}' for i in range(data.shape[1])]
         
-        # Record base performance
-        y_pred = self.classifier.predict(X)
-        self.base_performance = {
-            'accuracy': accuracy_score(y, y_pred),
-            'f1': f1_score(y, y_pred, average='weighted'),
-            'precision': precision_score(y, y_pred, average='weighted'),
-            'recall': recall_score(y, y_pred, average='weighted')
-        }
+        # Scale features
+        if labels is not None:
+            # Training mode - fit the scaler
+            scaled_data = self.scaler.fit_transform(data)
+        else:
+            # Prediction mode - transform only
+            scaled_data = self.scaler.transform(data)
         
-        return self
-    
-    def predict(self, X, time_step=0):
-        """Make predictions with simulated performance degradation."""
-        if not self.is_fitted:
-            raise ValueError("Classification stage must be fitted first.")
+        # Feature selection (if labels available)
+        if labels is not None and hasattr(self.feature_selector, 'fit'):
+            selected_data = self.feature_selector.fit_transform(scaled_data, labels)
+            self.feature_importance = dict(zip(
+                self.feature_names, 
+                self.feature_selector.scores_
+            ))
+        else:
+            # Prediction mode - transform only
+            selected_data = self.feature_selector.transform(scaled_data)
         
-        # Get base predictions
-        y_pred = self.classifier.predict(X)
-        y_proba = self.classifier.predict_proba(X)
-        
-        # Simulate performance degradation over time
-        if time_step > 0:
-            degradation_factor = time_step * self.degradation_rate
+        # Dimensionality reduction
+        if hasattr(self, 'fitted_pca') and self.fitted_pca is not None:
+            # Prediction mode - use fitted PCA
+            reduced_data = self.fitted_pca.transform(selected_data)
+        else:
+            # Training mode - fit PCA
+            if selected_data.shape[1] > self.pca.n_components:
+                # Adjust n_components if we have fewer features than requested
+                actual_n_components = min(self.pca.n_components, selected_data.shape[1])
+                if actual_n_components != self.pca.n_components:
+                    self.pca = PCA(n_components=actual_n_components)
+                reduced_data = self.pca.fit_transform(selected_data)
+            else:
+                reduced_data = selected_data
             
-            # Add noise to predictions based on confidence
-            for i in range(len(y_pred)):
-                confidence = np.max(y_proba[i])
-                
-                # Higher confidence predictions are less likely to be affected
-                if confidence < 0.8:
-                    # Add noise to low confidence predictions
-                    noise = np.random.normal(0, degradation_factor)
-                    if noise > 0.3:  # 30% chance of wrong prediction
-                        # Flip to a different class
-                        wrong_class = np.random.choice(self.n_classes)
-                        while wrong_class == y_pred[i]:
-                            wrong_class = np.random.choice(self.n_classes)
-                        y_pred[i] = wrong_class
-            
-            # Record performance
-            if hasattr(self, 'true_labels') and self.true_labels is not None:
-                current_performance = {
-                    'time_step': time_step,
-                    'accuracy': accuracy_score(self.true_labels, y_pred),
-                    'f1': f1_score(self.true_labels, y_pred, average='weighted'),
-                    'precision': precision_score(self.true_labels, y_pred, average='weighted'),
-                    'recall': recall_score(self.true_labels, y_pred, average='weighted'),
-                    'degradation_factor': degradation_factor
-                }
-                self.performance_history.append(current_performance)
+            # Store the fitted PCA for later use
+            self.fitted_pca = self.pca
         
-        return y_pred, y_proba
+        return reduced_data
     
-    def set_true_labels(self, y_true):
-        """Set true labels for performance tracking."""
-        self.true_labels = y_true
+    def get_feature_importance(self):
+        """Get feature importance scores."""
+        return self.feature_importance
     
-    def get_performance_summary(self):
-        """Get performance summary over time."""
-        if not self.performance_history:
-            return self.base_performance
+    def get_explained_variance(self):
+        """Get PCA explained variance."""
+        if hasattr(self.pca, 'explained_variance_ratio_'):
+            return self.pca.explained_variance_ratio_
+        return None
+
+
+class EmbeddingStage:
+    """Generate embeddings that can drift."""
+    
+    def __init__(self, embedding_dim=128, hidden_dim=256):
+        self.embedding_dim = embedding_dim
+        self.hidden_dim = hidden_dim
+        self.embedding_model = self._build_embedding_model()
+        self.embedding_history = []
         
-        return {
-            'base_performance': self.base_performance,
-            'current_performance': self.performance_history[-1] if self.performance_history else None,
-            'performance_history': self.performance_history
+    def _build_embedding_model(self):
+        """Build neural network for embedding generation."""
+        # We'll build this dynamically based on input size
+        return None
+    
+    def _create_embedding_model(self, input_dim):
+        """Create embedding model with correct input dimension."""
+        model = nn.Sequential(
+            nn.Linear(input_dim, self.hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(self.hidden_dim, self.hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(self.hidden_dim, self.embedding_dim),
+            nn.Tanh()  # Normalize embeddings
+        )
+        return model
+    
+    def process(self, data):
+        """Generate embeddings from input data."""
+        # Convert to tensor if needed
+        if not isinstance(data, torch.Tensor):
+            data_tensor = torch.FloatTensor(data)
+        else:
+            data_tensor = data
+        
+        # Create embedding model if not exists or wrong size
+        if self.embedding_model is None or self.embedding_model[0].in_features != data_tensor.shape[1]:
+            self.embedding_model = self._create_embedding_model(data_tensor.shape[1])
+        
+        # Generate embeddings
+        with torch.no_grad():
+            embeddings = self.embedding_model(data_tensor)
+        
+        # Store embedding statistics
+        embedding_stats = {
+            'mean': embeddings.mean().item(),
+            'std': embeddings.std().item(),
+            'min': embeddings.min().item(),
+            'max': embeddings.max().item()
         }
+        self.embedding_history.append(embedding_stats)
+        
+        return embeddings.numpy()
+    
+    def train_embeddings(self, data, labels, epochs=10):
+        """Train embedding model with supervision."""
+        data_tensor = torch.FloatTensor(data)
+        labels_tensor = torch.LongTensor(labels)
+        
+        # Create simple classifier on top of embeddings
+        classifier = nn.Linear(self.embedding_dim, len(np.unique(labels)))
+        optimizer = optim.Adam(list(self.embedding_model.parameters()) + list(classifier.parameters()))
+        criterion = nn.CrossEntropyLoss()
+        
+        for epoch in range(epochs):
+            optimizer.zero_grad()
+            embeddings = self.embedding_model(data_tensor)
+            outputs = classifier(embeddings)
+            loss = criterion(outputs, labels_tensor)
+            loss.backward()
+            optimizer.step()
+        
+        return self.embedding_model
+
+
+class PrimaryClassifier:
+    """Primary classification model with advanced features."""
+    
+    def __init__(self, model_type='random_forest'):
+        self.model_type = model_type
+        self.model = self._build_model()
+        self.training_history = []
+        self.prediction_confidence = []
+        
+    def _build_model(self):
+        """Build the primary classification model."""
+        if self.model_type == 'random_forest':
+            return RandomForestClassifier(n_estimators=100, random_state=42)
+        elif self.model_type == 'logistic_regression':
+            return LogisticRegression(random_state=42, max_iter=1000)
+        elif self.model_type == 'neural_network':
+            return MLPClassifier(hidden_layer_sizes=(100, 50), random_state=42)
+        else:
+            raise ValueError(f"Unknown model type: {self.model_type}")
+    
+    def train(self, X, y):
+        """Train the primary classifier."""
+        self.model.fit(X, y)
+        
+        # Store training metrics
+        train_score = self.model.score(X, y)
+        self.training_history.append({
+            'train_accuracy': train_score,
+            'n_samples': len(X),
+            'n_features': X.shape[1]
+        })
+        
+        return train_score
+    
+    def predict(self, X):
+        """Make predictions with confidence scores."""
+        if hasattr(self.model, 'predict_proba'):
+            probabilities = self.model.predict_proba(X)
+            predictions = self.model.predict(X)
+            confidence = np.max(probabilities, axis=1)
+        else:
+            predictions = self.model.predict(X)
+            confidence = np.ones(len(predictions))  # Default confidence
+        
+        # Store confidence statistics
+        self.prediction_confidence.append({
+            'mean_confidence': np.mean(confidence),
+            'std_confidence': np.std(confidence),
+            'low_confidence_count': np.sum(confidence < 0.8)
+        })
+        
+        return predictions, confidence
+    
+    def get_feature_importance(self):
+        """Get feature importance if available."""
+        if hasattr(self.model, 'feature_importances_'):
+            return self.model.feature_importances_
+        elif hasattr(self.model, 'coef_'):
+            return np.abs(self.model.coef_[0])
+        else:
+            return None
+
+
+class SecondaryClassifier:
+    """Secondary classifier for ensemble or specialized tasks."""
+    
+    def __init__(self, model_type='logistic_regression'):
+        self.model_type = model_type
+        self.model = self._build_model()
+        self.ensemble_weights = 0.5  # Weight in ensemble
+        self.specialization = 'uncertainty'  # Specialized for uncertain cases
+        
+    def _build_model(self):
+        """Build the secondary classifier."""
+        if self.model_type == 'logistic_regression':
+            return LogisticRegression(random_state=42, max_iter=1000)
+        elif self.model_type == 'random_forest':
+            return RandomForestClassifier(n_estimators=50, random_state=42)
+        elif self.model_type == 'neural_network':
+            return MLPClassifier(hidden_layer_sizes=(50, 25), random_state=42)
+        else:
+            raise ValueError(f"Unknown model type: {self.model_type}")
+    
+    def train(self, X, y, primary_predictions=None):
+        """Train secondary classifier, optionally using primary predictions."""
+        if primary_predictions is not None:
+            # Use primary predictions as additional features
+            X_with_primary = np.column_stack([X, primary_predictions])
+            self.model.fit(X_with_primary, y)
+            return self.model.score(X_with_primary, y)
+        else:
+            self.model.fit(X, y)
+            return self.model.score(X, y)
+    
+    def predict(self, X, primary_predictions=None):
+        """Make predictions with optional primary model input."""
+        if primary_predictions is not None:
+            X_with_primary = np.column_stack([X, primary_predictions])
+            predictions = self.model.predict(X_with_primary)
+            probabilities = self.model.predict_proba(X_with_primary) if hasattr(self.model, 'predict_proba') else None
+        else:
+            predictions = self.model.predict(X)
+            probabilities = self.model.predict_proba(X) if hasattr(self.model, 'predict_proba') else None
+        
+        return predictions, probabilities
 
 
 class PostProcessingStage:
-    """Stage 3: Post-processing with business rules and cascade effects."""
+    """Post-processing stage for final predictions."""
     
-    def __init__(self, confidence_threshold=0.7, cascade_sensitivity=0.1):
-        self.confidence_threshold = confidence_threshold
-        self.cascade_sensitivity = cascade_sensitivity
-        self.business_rules = []
-        self.cascade_history = []
+    def __init__(self):
+        self.post_processing_rules = []
+        self.output_format = 'standard'
+        self.confidence_threshold = 0.8
         
-    def add_business_rule(self, rule_func, rule_name):
-        """Add a business rule function."""
-        self.business_rules.append({
-            'function': rule_func,
-            'name': rule_name
-        })
+    def process(self, predictions, probabilities=None, confidence=None):
+        """Apply post-processing to predictions."""
+        processed_predictions = predictions.copy()
+        
+        # Apply confidence thresholding
+        if confidence is not None:
+            low_confidence_mask = confidence < self.confidence_threshold
+            processed_predictions[low_confidence_mask] = -1  # Reject prediction
+        
+        # Apply business rules
+        processed_predictions = self._apply_business_rules(processed_predictions)
+        
+        # Format output
+        output = self._format_output(processed_predictions, probabilities, confidence)
+        
+        return output
     
-    def process(self, predictions, probabilities, time_step=0):
-        """Apply post-processing with cascade effects."""
-        final_decisions = []
-        cascade_effects = []
-        
-        for i, (pred, proba) in enumerate(zip(predictions, probabilities)):
-            confidence = np.max(proba)
-            original_pred = pred
-            
-            # Apply business rules
-            for rule in self.business_rules:
-                pred = rule['function'](pred, confidence, proba)
-            
-            # Simulate cascade effects from upstream errors
-            if time_step > 0:
-                # Cascade effect: errors from previous stages affect this stage
-                cascade_factor = time_step * self.cascade_sensitivity
-                
-                # If confidence is low, cascade effects are more likely
-                if confidence < self.confidence_threshold:
-                    cascade_noise = np.random.normal(0, cascade_factor)
-                    if cascade_noise > 0.5:
-                        # Cascade effect: change prediction
-                        new_pred = np.random.choice(len(proba))
-                        while new_pred == pred:
-                            new_pred = np.random.choice(len(proba))
-                        pred = new_pred
-                
-                cascade_effects.append({
-                    'original_pred': original_pred,
-                    'final_pred': pred,
-                    'confidence': confidence,
-                    'cascade_factor': cascade_factor,
-                    'cascade_affected': pred != original_pred
-                })
-            
-            final_decisions.append(pred)
-        
-        # Record cascade effects
-        if cascade_effects:
-            self.cascade_history.append({
-                'time_step': time_step,
-                'cascade_effects': cascade_effects,
-                'cascade_rate': sum(1 for effect in cascade_effects if effect['cascade_affected']) / len(cascade_effects)
-            })
-        
-        return final_decisions
+    def _apply_business_rules(self, predictions):
+        """Apply domain-specific business rules."""
+        # Example: Ensure certain classes are not predicted together
+        # This is a placeholder for real business logic
+        return predictions
     
-    def get_cascade_summary(self):
-        """Get cascade effect summary."""
-        if not self.cascade_history:
-            return "No cascade effects recorded."
+    def _format_output(self, predictions, probabilities, confidence):
+        """Format the final output."""
+        output = {
+            'predictions': predictions,
+            'confidence': confidence if confidence is not None else np.ones(len(predictions)),
+            'rejected_count': np.sum(predictions == -1) if -1 in predictions else 0
+        }
         
-        total_effects = sum(len(entry['cascade_effects']) for entry in self.cascade_history)
-        affected_predictions = sum(
-            sum(1 for effect in entry['cascade_effects'] if effect['cascade_affected'])
-            for entry in self.cascade_history
+        if probabilities is not None:
+            output['probabilities'] = probabilities
+        
+        return output
+
+
+class ProductionMLPipeline:
+    """Complete production-ready ML pipeline."""
+    
+    def __init__(self):
+        self.stages = {
+            'data_ingestion': DataIngestionStage(),
+            'feature_engineering': FeatureEngineeringStage(),
+            'embedding_generation': EmbeddingStage(),
+            'primary_classifier': PrimaryClassifier(),
+            'secondary_classifier': SecondaryClassifier(),
+            'post_processing': PostProcessingStage()
+        }
+        self.component_graph = self._build_component_graph()
+        self.pipeline_history = []
+        self.stage_performances = {}
+        
+    def _build_component_graph(self):
+        """Build TFX-style component graph."""
+        return {
+            'data_ingestion': ['feature_engineering'],
+            'feature_engineering': ['embedding_generation'],
+            'embedding_generation': ['primary_classifier'],
+            'primary_classifier': ['secondary_classifier'],
+            'secondary_classifier': ['post_processing'],
+            'post_processing': []
+        }
+    
+    def train_pipeline(self, data, labels):
+        """Train the complete pipeline."""
+        print("Training production ML pipeline...")
+        
+        # Stage 1: Data Ingestion
+        processed_data, quality_report = self.stages['data_ingestion'].process(data)
+        print(f"Data quality score: {quality_report['quality_score']:.3f}")
+        
+        # Stage 2: Feature Engineering
+        engineered_features = self.stages['feature_engineering'].process(processed_data, labels)
+        print(f"Engineered features shape: {engineered_features.shape}")
+        
+        # Stage 3: Embedding Generation
+        embeddings = self.stages['embedding_generation'].process(engineered_features)
+        print(f"Generated embeddings shape: {embeddings.shape}")
+        
+        # Stage 4: Primary Classifier
+        primary_score = self.stages['primary_classifier'].train(embeddings, labels)
+        print(f"Primary classifier accuracy: {primary_score:.3f}")
+        
+        # Stage 5: Secondary Classifier
+        primary_predictions, _ = self.stages['primary_classifier'].predict(embeddings)
+        secondary_score = self.stages['secondary_classifier'].train(embeddings, labels, primary_predictions)
+        print(f"Secondary classifier accuracy: {secondary_score:.3f}")
+        print(f"Secondary classifier accuracy: {secondary_score:.3f}")
+        
+        # Store pipeline performance
+        self.stage_performances = {
+            'data_quality': quality_report['quality_score'],
+            'primary_classifier': primary_score,
+            'secondary_classifier': secondary_score
+        }
+        
+        print("Pipeline training completed!")
+        return self.stage_performances
+    
+    def predict(self, data):
+        """Run complete prediction pipeline."""
+        # Stage 1: Data Ingestion
+        processed_data, _ = self.stages['data_ingestion'].process(data)
+        
+        # Stage 2: Feature Engineering
+        engineered_features = self.stages['feature_engineering'].process(processed_data)
+        
+        # Stage 3: Embedding Generation
+        embeddings = self.stages['embedding_generation'].process(engineered_features)
+        
+        # Stage 4: Primary Classifier
+        primary_predictions, primary_confidence = self.stages['primary_classifier'].predict(embeddings)
+        
+        # Stage 5: Secondary Classifier
+        secondary_predictions, secondary_probabilities = self.stages['secondary_classifier'].predict(
+            embeddings, primary_predictions
         )
         
-        return {
-            'total_predictions': total_effects,
-            'affected_predictions': affected_predictions,
-            'cascade_rate': affected_predictions / total_effects if total_effects > 0 else 0,
-            'cascade_history': self.cascade_history
-        }
-
-
-class MLPipeline:
-    """Complete ML pipeline with all stages."""
-    
-    def __init__(self, n_features=10, n_classes=3):
-        self.feature_stage = FeatureExtractionStage(n_features=n_features)
-        self.classification_stage = ClassificationStage(n_classes=n_classes)
-        self.post_processing_stage = PostProcessingStage()
+        # Stage 6: Post Processing
+        final_output = self.stages['post_processing'].process(
+            secondary_predictions, secondary_probabilities, primary_confidence
+        )
         
-        # Add some default business rules
-        self._setup_default_business_rules()
-        
-        self.pipeline_history = []
-        
-    def _setup_default_business_rules(self):
-        """Setup default business rules."""
-        
-        def high_confidence_rule(pred, confidence, proba):
-            """High confidence predictions are more reliable."""
-            if confidence > 0.9:
-                return pred  # Keep high confidence predictions
-            elif confidence < 0.5:
-                # Low confidence: apply conservative approach
-                return np.argmax(proba)  # Most likely class
-            return pred
-        
-        def uncertainty_penalty(pred, confidence, proba):
-            """Apply penalty for uncertain predictions."""
-            if confidence < 0.6:
-                # Apply penalty: prefer class 0 (assumed to be "safe" class)
-                return 0
-            return pred
-        
-        self.post_processing_stage.add_business_rule(high_confidence_rule, "high_confidence_rule")
-        self.post_processing_stage.add_business_rule(uncertainty_penalty, "uncertainty_penalty")
-    
-    def fit(self, X, y):
-        """Fit all pipeline stages."""
-        # Fit feature extraction
-        self.feature_stage.fit(X, y)
-        
-        # Transform data for classification
-        X_transformed = self.feature_stage.transform(X)
-        
-        # Fit classification
-        self.classification_stage.fit(X_transformed, y)
-        
-        return self
-    
-    def predict(self, X, time_step=0):
-        """Run complete pipeline prediction."""
-        # Stage 1: Feature extraction
-        X_transformed = self.feature_stage.transform(X, time_step)
-        
-        # Stage 2: Classification
-        predictions, probabilities = self.classification_stage.predict(X_transformed, time_step)
-        
-        # Stage 3: Post-processing
-        final_predictions = self.post_processing_stage.process(predictions, probabilities, time_step)
-        
-        # Record pipeline execution
+        # Store pipeline history
         self.pipeline_history.append({
-            'time_step': time_step,
-            'input_shape': X.shape,
-            'transformed_shape': X_transformed.shape,
-            'predictions': final_predictions,
-            'probabilities': probabilities
+            'input_shape': data.shape,
+            'output_shape': final_output['predictions'].shape,
+            'rejected_count': final_output['rejected_count']
         })
         
-        return final_predictions, probabilities
+        return final_output
     
     def get_pipeline_summary(self):
         """Get comprehensive pipeline summary."""
         return {
-            'feature_stage': {
-                'drift_history': self.feature_stage.drift_history,
-                'feature_importance': self.feature_stage.feature_importance
-            },
-            'classification_stage': {
-                'performance': self.classification_stage.get_performance_summary(),
-                'degradation_rate': self.classification_stage.degradation_rate
-            },
-            'post_processing_stage': {
-                'cascade_summary': self.post_processing_stage.get_cascade_summary(),
-                'business_rules': [rule['name'] for rule in self.post_processing_stage.business_rules]
-            },
-            'pipeline_history': self.pipeline_history
+            'stages': list(self.stages.keys()),
+            'component_graph': self.component_graph,
+            'stage_performances': self.stage_performances,
+            'pipeline_history': self.pipeline_history,
+            'total_predictions': sum(h['output_shape'][0] for h in self.pipeline_history),
+            'total_rejected': sum(h['rejected_count'] for h in self.pipeline_history)
         }
-
-
-if __name__ == "__main__":
-    # Test the pipeline stages
-    from src.data.synthetic_data import SyntheticDataGenerator
     
-    # Generate test data
-    generator = SyntheticDataGenerator(n_samples=1000, n_features=10, n_classes=3)
-    X, y = generator.generate_base_data()
-    
-    print("Testing pipeline stages...")
-    
-    # Test feature extraction
-    feature_stage = FeatureExtractionStage()
-    feature_stage.fit(X, y)
-    X_transformed = feature_stage.transform(X)
-    print(f"Feature extraction: {X.shape} -> {X_transformed.shape}")
-    
-    # Test classification
-    classification_stage = ClassificationStage()
-    classification_stage.fit(X_transformed, y)
-    predictions, probabilities = classification_stage.predict(X_transformed)
-    print(f"Classification accuracy: {accuracy_score(y, predictions):.3f}")
-    
-    # Test post-processing
-    post_stage = PostProcessingStage()
-    final_predictions = post_stage.process(predictions, probabilities)
-    print(f"Post-processing completed: {len(final_predictions)} predictions")
-    
-    # Test complete pipeline
-    pipeline = MLPipeline()
-    pipeline.fit(X, y)
-    final_preds, final_probs = pipeline.predict(X)
-    print(f"Complete pipeline accuracy: {accuracy_score(y, final_preds):.3f}")
-    
-    print("\nAll pipeline stages working correctly!") 
+    def retrain_stage(self, stage_name, new_data, new_labels=None):
+        """Retrain a specific pipeline stage."""
+        if stage_name not in self.stages:
+            raise ValueError(f"Unknown stage: {stage_name}")
+        
+        print(f"Retraining stage: {stage_name}")
+        
+        if stage_name == 'primary_classifier':
+            # For classifiers, we need labels
+            if new_labels is None:
+                raise ValueError("Labels required for classifier retraining")
+            
+            # Get embeddings for retraining
+            processed_data, _ = self.stages['data_ingestion'].process(new_data)
+            engineered_features = self.stages['feature_engineering'].process(processed_data, new_labels)
+            embeddings = self.stages['embedding_generation'].process(engineered_features)
+            
+            # Retrain classifier
+            new_score = self.stages[stage_name].train(embeddings, new_labels)
+            print(f"Retrained {stage_name} accuracy: {new_score:.3f}")
+            
+        elif stage_name == 'feature_engineering':
+            # Retrain feature engineering with new data
+            if new_labels is not None:
+                engineered_features = self.stages[stage_name].process(new_data, new_labels)
+            else:
+                engineered_features = self.stages[stage_name].process(new_data)
+            print(f"Retrained {stage_name} with {engineered_features.shape[1]} features")
+        
+        return True 
