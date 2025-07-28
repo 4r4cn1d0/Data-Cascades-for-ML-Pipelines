@@ -2,7 +2,7 @@
 
 A comprehensive framework for monitoring and mitigating data drift propagation through multi-stage ML pipelines, with formal metrics, advanced drift detection, and intelligent retraining strategies.
 
-![Pipeline Architecture](arxiv/media/pipeline_architecture.png)
+![Pipeline Architecture](media/pipeline_architecture.png)
 
 ## 🎯 Project Overview
 
@@ -20,7 +20,7 @@ This project addresses the critical challenge of cascade effects in production M
 
 ## 📊 Experimental Results
 
-![Performance Degradation Analysis](arxiv/media/degradation_plot.png)
+![Performance Degradation Analysis](media/degradation_plot.png)
 
 - **Degradation Slopes**: -0.0200 to -0.0479 (statistically significant, p < 0.001)
 - **Cascade Strength**: 0.0804 (moderate correlation)
@@ -30,9 +30,9 @@ This project addresses the critical challenge of cascade effects in production M
 
 ## 🔍 Drift Detection & Cascade Analysis
 
-![Drift Detection Analysis](arxiv/media/drift_detection.png)
+![Drift Detection Analysis](media/drift_detection.png)
 
-![Cascade Effect Heatmap](arxiv/media/cascade_heatmap.png)
+![Cascade Effect Heatmap](media/cascade_heatmap.png)
 
 ## 🚀 Quick Start
 
@@ -89,7 +89,7 @@ Open your browser to `http://localhost:8501` to access the interactive dashboard
 
 ### Retraining Strategies
 
-![Retraining Strategy Analysis](arxiv/media/retraining_strategies.png)
+![Retraining Strategy Analysis](media/retraining_strategies.png)
 
 1. **Threshold-based**: Performance-based triggers
 2. **Scheduled**: Time-based retraining
