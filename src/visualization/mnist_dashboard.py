@@ -18,12 +18,7 @@ from sklearn.ensemble import RandomForestClassifier
 import cv2
 import pandas as pd
 
-# Page configuration
-st.set_page_config(
-    page_title="Real MNIST Drift Analysis",
-    page_icon="",
-    layout="wide"
-)
+# Page configuration removed - now set in app.py
 
 @st.cache_data
 def load_mnist_data():
