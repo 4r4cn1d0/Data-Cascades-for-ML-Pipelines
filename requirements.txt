@@ -9,4 +9,4 @@ scipy==1.11.1
 torch==2.0.1
 shap==0.42.1
 networkx==3.1
-kaggle==1.5.16 
+kaggle==1.5.16
